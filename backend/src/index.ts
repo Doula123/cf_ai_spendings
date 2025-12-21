@@ -12,7 +12,12 @@
  */
 
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response('Hello World!');
+	async fetch(req: Request): Promise<Response> {
+		const url = new URL(req.url);
+
+		if (url.pathname === '/api/ping') {
+			return Response.json({ message: 'pong', ok:true});
+		}
+		return new Response('Not Found', { status: 404 });
 	},
-} satisfies ExportedHandler<Env>;
+}
