@@ -1,15 +1,9 @@
 import type {Env, 
 	AnalyzeRequest, 
 	NormalizedTransaction, 
-	CategorizedTransaction, 
-	Category,
 	} from "./types";
 
-import { summaryBuilder, monthSummaryBuilder, findSubscription } from "./analytics";
-
-import { normalizedMerchant, categorizeMerchant   } from "./ai";
-
-
+export {AnalyzeWorkflow} from "./workflows/analyze";
 
 const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
@@ -59,7 +53,7 @@ function amountToCents(raw:string): number | null {
 	}
 	return Math.round(amount * 100);
 }
-function parseLine(line:string): {txn?: NormalizedTransaction, warning?: string}
+export function parseLine(line:string): {txn?: NormalizedTransaction, warning?: string}
 {
 	const trimmed = line.trim();
 	if (!trimmed) return {};
@@ -86,9 +80,8 @@ function parseLine(line:string): {txn?: NormalizedTransaction, warning?: string}
 			centsAmount: cents
 		}
 	}
-	
-}
-
+ }
+ 
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> { // Cloudflare Worker entry point
 		const url = new URL(req.url);
@@ -121,7 +114,7 @@ export default {
 		  
 			const row = await env.DB
 			  .prepare(
-				"SELECT id, created_at, input_text, summary_json FROM runs WHERE id = ?1"
+				"SELECT id, created_at, input_text, summary_json, status FROM runs WHERE id = ?1"
 			  )
 			  .bind(id)
 			  .first<{
@@ -129,6 +122,7 @@ export default {
 				created_at: string;
 				input_text: string;
 				summary_json: string;
+				status: string;
 			  }>();
 		  
 			if (!row) {
@@ -144,6 +138,7 @@ export default {
 			  {
 				ok: true,
 				id: row.id,
+				status: row.status,
 				created_at: row.created_at,
 				input_text: row.input_text,
 				data,
@@ -152,77 +147,26 @@ export default {
 			);
 		  }
 			
-
 		if (url.pathname === '/api/analyze' && req.method === 'POST') {
 			const reqBody = ( await req.json()) as AnalyzeRequest;
 			const text = reqBody.text || '';
 			if (!text) return new Response("Missing text", { status: 400, headers: corsHeaders });
-			const normalized: NormalizedTransaction[] = [];
-			const warnings: string[] = [];
-
-			for (const line of text.split("\n"))  // Check every line
-				{ 
-					const { txn, warning } = parseLine(line);
-					if (warning) warnings.push(warning);
-					if (txn) normalized.push(txn);
-				}
-			// Normalize merchants using AI
-			const uniqueMerchants = Array.from(new Set(normalized.map(t => t.merchant)));
-			const merchantMap = new Map<string, string>();
-			await Promise.all(
-				uniqueMerchants.map(async (m) => {
-					const norm = await normalizedMerchant(env, m);
-					merchantMap.set(m, norm);
-				})
-			);
-			const normalizedMerchants: NormalizedTransaction[] = normalized.map(t => ({
-				...t,
-				merchant: merchantMap.get(t.merchant) ?? t.merchant,
-			}));
-
-			// Categorize merchants using AI
-
-			const uniqueNormalizedMerchants = Array.from(new Set(normalizedMerchants.map(t => t.merchant)));
-			const categoryMap = new Map<string, Category>();
-			await Promise.all(
-				uniqueNormalizedMerchants.map(async (m) => {
-					const category = await categorizeMerchant(env, m);
-					categoryMap.set(m, category);
-				})
-			)
-			const categorized: CategorizedTransaction[] = normalizedMerchants.map(t => ({
-				...t,
-				category: categoryMap.get(t.merchant) ?? "Other",
-			}));
-
-			// Build Summary
-
-			const summary = summaryBuilder(categorized);
-
-			// Build monthly Summary
-
-			const monthlySummary = monthSummaryBuilder(categorized);
-
-			// Subscriptions
-
-			const subscriptions = findSubscription(normalizedMerchants);
+			
 
 			// Save runID
 
 			const runId = crypto.randomUUID();
 			await env.DB.prepare(
-			"INSERT INTO runs (id, input_text, summary_json) VALUES (?1, ?2, ?3)")
-			.bind(runId, text, JSON.stringify({ summary, monthlySummary, subscriptions }))
-			.run();
+				"INSERT INTO runs (id, input_text, summary_json, status) VALUES (?1, ?2, ?3, 'pending')")
+				.bind(runId, text, "{}")
+				.run();
+ 
+			await env.ANALYZE_WORKFLOW.create({id:runId, params: {runId, text}});
 		  
 			return Response.json({ 
 				 ok: true,
 				 runId,
-				 transactions: categorized, 
-				 warnings, 
-				 subscriptions,
-				 summary,
-				 monthlySummary }, 
+				 }, 
 				 { headers: corsHeaders }
 				) ;
 

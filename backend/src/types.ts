@@ -1,9 +1,11 @@
 export interface Env {
 	AI: Ai;
 	DB: D1Database;
+    ANALYZE_WORKFLOW: Workflow;
   }
 
 export type AnalyzeRequest = { text?: string };
+export type Params = { runId:string; text:string; };
 
 export type NormalizedTransaction = {
 	date: string | null; // Date could be optional

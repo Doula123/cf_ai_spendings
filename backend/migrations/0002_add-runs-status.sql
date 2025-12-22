@@ -1,0 +1,5 @@
+-- Migration number: 0002 	 2025-12-22T18:48:01.511Z
+
+
+ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'queued';
+ALTER TABLE runs ADD COLUMN error TEXT;
