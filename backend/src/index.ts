@@ -156,10 +156,47 @@ function parseLine(line:string): {txn?: NormalizedTransaction, warning?: string}
 	
 }
 
+async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> { // Normalize merchant names using AI
+	
+	const merchant = merchantRaw.trim();
+	if (!merchant) return merchantRaw;
+
+	const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", // Llama 3.3
+	{
+		messages:[ 
+			{
+				role: "system", // Instructions for the AI
+				content:
+				  'You normalize merchant names from bank transactions. ' +
+  				  'Remove locations, country codes, transaction IDs, asterisks, numbers, .com, and POS markers. ' +
+  				  'Return the canonical brand name only. ' +
+  				  'If the merchant refers to Netflix, always return "Netflix". ' +
+  				  'Output ONLY JSON: {"normalizedMerchant":"..."}',
+			  },
+			  {
+				role: "user", // The actual prompt with the merchant name
+				content:
+				  `Normalize this to a clean brand name.\n` +
+				  `Remove codes/IDs like *1234, locations, .com, CA, POS.\n` +
+				  `Keep only the brand. If unsure, return the original cleaned.\n\n` +
+				  `merchant: ${merchant}`,
+			  },
+		],
+		temperature:0,
+		response_format: {type:"json_object"},
+	});
+	console.log("AI raw result:", JSON.stringify(result));
+	const wrapper = result as { response?: string };
+
+	if (!wrapper.response) return merchant;
+	const parsed = JSON.parse(wrapper.response) as { normalizedMerchant?: string };
+	return parsed.normalizedMerchant?.trim() || merchant;
+
+}
 
 
 export default {
-	async fetch(req: Request): Promise<Response> {
+	async fetch(req: Request, env: Env): Promise<Response> { // Cloudflare Worker entry point
 		const url = new URL(req.url);
 
 		if (req.method === "OPTIONS") {
@@ -183,8 +220,22 @@ export default {
 					if (warning) warnings.push(warning);
 					if (txn) normalized.push(txn);
 				}
-			const subscriptions = findSubscription(normalized);
-			return Response.json({ ok: true, normalized, warnings, subscriptions }, { headers: corsHeaders });
+			// Normalize merchants using AI
+			const uniqueMerchants = Array.from(new Set(normalized.map(t => t.merchant)));
+			const merchantMap = new Map<string, string>();
+			await Promise.all(
+				uniqueMerchants.map(async (m) => {
+					const norm = await normalizedMerchant(env, m);
+					merchantMap.set(m, norm);
+				})
+			);
+			const normalizedMerchants: NormalizedTransaction[] = normalized.map(t => ({
+				...t,
+				merchant: merchantMap.get(t.merchant) ?? t.merchant,
+			}));
+
+			const subscriptions = findSubscription(normalizedMerchants);
+			return Response.json({ ok: true, normalized: normalizedMerchants, warnings, subscriptions,merchantMap: Object.fromEntries(merchantMap) }, { headers: corsHeaders });
 
 
 		}
