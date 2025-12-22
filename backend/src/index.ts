@@ -4,6 +4,11 @@ const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Headers": "Content-Type",
 };
 
+export interface Env {
+	AI: Ai;
+	DB: D1Database;
+  }
+
 type AnalyzeRequest = { text?: string };
 
 type NormalizedTransaction = {
@@ -36,6 +41,11 @@ type Summary = {
 	byCategoryCents: Record<Category, number>;
 	byMerchantCents: Record<string, number>;
 	topMerchants: Array<{ merchant: string; cents: number }>;
+}
+
+type MonthlySummary = {
+	byMonthCents: Record<string, number>;
+	byMonthCategoryCents: Record<string, Record<Category, number>>;
 }
 
 const allowedCategories: Category[] = [
@@ -78,6 +88,38 @@ function summaryBuilder(categorized: CategorizedTransaction[]): Summary{
 		byMerchantCents,
 		topMerchants,
 	};
+}
+
+function monthSummaryBuilder(categorized: CategorizedTransaction[]): MonthlySummary {
+
+	const byMonthCents: Record<string, number> = {};
+	const byMonthCategoryCents: Record<string, Record<Category, number>> = {};
+
+	for (const t of categorized) {
+		if (!t.date) continue; // Skip if no date
+
+		const month = monthKey(t.date);
+		byMonthCents[month] = (byMonthCents[month] || 0) + t.centsAmount;
+
+		if (!byMonthCategoryCents[month]) {
+			byMonthCategoryCents[month] = {
+				"Entertainment": 0,
+				"Food & Drink": 0,
+				"Fitness": 0,
+				"Shopping": 0,
+				"Travel": 0,
+				"Bills": 0,
+				"Other": 0,
+			};
+		}
+		byMonthCategoryCents[month][t.category] += t.centsAmount;
+	}
+	return { byMonthCents, byMonthCategoryCents } 
+
+	
+}
+function monthKey(date:string): string {
+	return date.slice(0, 7); // YYYY-MM
 }
 function isCategory(x: string): x is Category {
 
@@ -223,6 +265,12 @@ async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> 
 	const merchant = merchantRaw.trim();
 	if (!merchant) return merchantRaw;
 
+	const cached = await env.DB.prepare("SELECT normalized_merchant FROM merchant_norm_cache WHERE raw_merchant = ?1")
+								.bind(merchant)
+								.first<{normalized_merchant:string}>();
+
+	if (cached?.normalized_merchant) return cached.normalized_merchant;
+
 	const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", // Llama 3.3
 	{
 		messages:[ 
@@ -248,17 +296,31 @@ async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> 
 		response_format: {type:"json_object"},
 	});
 	console.log("AI raw result:", JSON.stringify(result));
+
 	const wrapper = result as { response?: string };
+  	const parsed = wrapper.response ? (JSON.parse(wrapper.response) as { normalizedMerchant?: string }) : {};
+  	const out = (parsed.normalizedMerchant ?? "").trim() || merchant;
 
-	if (!wrapper.response) return merchant;
-	const parsed = JSON.parse(wrapper.response) as { normalizedMerchant?: string };
-	return parsed.normalizedMerchant?.trim() || merchant;
+  	// 3) save cache
+  	await env.DB
+    .prepare("INSERT OR REPLACE INTO merchant_norm_cache (raw_merchant, normalized_merchant) VALUES (?1, ?2)")
+    .bind(merchant, out)
+    .run();
 
+  	return out;
 }
 async function categorizeMerchant(env:Env, merchant:string): Promise<Category> { // Categorize merchant using AI
 
 	const cleaned = merchant.trim();
 	if (!cleaned) return "Other";
+
+	const cached = await env.DB
+    .prepare("SELECT category FROM merchant_category_cache WHERE merchant = ?1")
+    .bind(cleaned)
+    .first<{ category: string }>();
+
+ 	if (cached?.category && isCategory(cached.category)) return cached.category;
+
 
 	const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {  // Llama 3.3
 		
@@ -281,14 +343,19 @@ async function categorizeMerchant(env:Env, merchant:string): Promise<Category> {
 		response_format: {type:"json_object"},
 	
 	});
-	const wrapper = result as { response?: string }; // Extract response
-  	if (!wrapper.response) return "Other"; 
-
-  	const parsed = JSON.parse(wrapper.response) as { category?: string }; // Parse JSON
+	const wrapper = result as { response?: string };
+  	const parsed = wrapper.response ? (JSON.parse(wrapper.response) as { category?: string }) : {};
   	const out = (parsed.category ?? "").trim();
+  	const finalCat: Category = isCategory(out) ? out : "Other";
 
-  	return isCategory(out) ? out : "Other";
-} 
+  	// 3) save cache
+  	await env.DB
+    .prepare("INSERT OR REPLACE INTO merchant_category_cache (merchant, category) VALUES (?1, ?2)")
+    .bind(cleaned, finalCat)
+    .run();
+
+  	return finalCat;
+}
 
 
 export default {
@@ -302,6 +369,58 @@ export default {
 		if (url.pathname === "/api/ping") {
 			return Response.json({ message: "pong", ok: true }, { headers: corsHeaders });
 		}
+
+		// Previous Runs
+
+		if (url.pathname === '/api/runs' && req.method === 'GET') {
+			const {results} = await env.DB.prepare("SELECT id, created_at FROM runs ORDER BY created_at DESC LIMIT 20")
+										  .all<{ id: string; created_at: string }>();
+			return Response.json({ ok: true, runs: results }, { headers: corsHeaders });
+		}
+		// Get run by id
+		if (url.pathname === '/api/run' && req.method === 'GET') {
+			const id = url.searchParams.get("id");
+
+			if (!id) {
+			  return new Response("Missing run id", {
+				status: 400,
+				headers: corsHeaders,
+			  });
+			}
+		  
+			const row = await env.DB
+			  .prepare(
+				"SELECT id, created_at, input_text, summary_json FROM runs WHERE id = ?1"
+			  )
+			  .bind(id)
+			  .first<{
+				id: string;
+				created_at: string;
+				input_text: string;
+				summary_json: string;
+			  }>();
+		  
+			if (!row) {
+			  return new Response("Run not found", {
+				status: 404,
+				headers: corsHeaders,
+			  });
+			}
+		  
+			const data = JSON.parse(row.summary_json);
+		  
+			return Response.json(
+			  {
+				ok: true,
+				id: row.id,
+				created_at: row.created_at,
+				input_text: row.input_text,
+				summary,
+			  },
+			  { headers: corsHeaders }
+			);
+		  }
+			
 
 		if (url.pathname === '/api/analyze' && req.method === 'POST') {
 			const reqBody = ( await req.json()) as AnalyzeRequest;
@@ -349,18 +468,32 @@ export default {
 
 			const summary = summaryBuilder(categorized);
 
+			// Build monthly Summary
+
+			const monthlySummary = monthSummaryBuilder(categorized);
+
 			// Subscriptions
 
 			const subscriptions = findSubscription(normalizedMerchants);
+
+			// Save runID
+
+			const runId = crypto.randomUUID();
+			await env.DB.prepare(
+			"INSERT INTO runs (id, input_text, summary_json) VALUES (?1, ?2, ?3)")
+			.bind(runId, text, JSON.stringify({ summary, monthlySummary, subscriptions }))
+			.run();
+		  
 			return Response.json({ 
 				 ok: true,
+				 runId,
 				 transactions: categorized, 
 				 warnings, 
 				 subscriptions,
-				 summary, }, 
+				 summary,
+				 monthlySummary }, 
 				 { headers: corsHeaders }
 				) ;
-
 
 		}
 		return new Response("Not Found", { status: 404, headers: corsHeaders });

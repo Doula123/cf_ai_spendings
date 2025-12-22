@@ -7,6 +7,12 @@
 	"name": "backend",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-12-20",
+	"d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ai-spending-db",
+      "database_id": "b311cc82-4abf-4846-8e45-0232b2ea9e67"
+    }],
 	"observability": {
 		"enabled": true
 	},
