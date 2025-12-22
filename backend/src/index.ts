@@ -20,7 +20,69 @@ type PossibleSubscriptions =
 	lastDate:string;
 	avgGapDays:number;
 }
+type Category = 
+	| "Entertainment"
+	| "Food & Drink"
+	| "Fitness"
+	| "Shopping"
+	| "Travel"
+	| "Bills"
+	| "Other";
 
+type CategorizedTransaction = NormalizedTransaction & { category: Category };
+
+type Summary = {
+	totalCents: number;
+	byCategoryCents: Record<Category, number>;
+	byMerchantCents: Record<string, number>;
+	topMerchants: Array<{ merchant: string; cents: number }>;
+}
+
+const allowedCategories: Category[] = [
+  		"Entertainment",
+  		"Food & Drink",
+  		"Fitness",
+  		"Shopping",
+  		"Travel",
+  		"Bills",
+  		"Other",
+		];
+
+function summaryBuilder(categorized: CategorizedTransaction[]): Summary{
+	const totalCents = categorized.reduce((sum, t) => sum + t.centsAmount, 0);
+
+	const byCategoryCents: Record<Category, number> = {
+		"Entertainment": 0,
+		"Food & Drink": 0,
+		"Fitness": 0,
+		"Shopping": 0,
+		"Travel": 0,
+		"Bills": 0,
+		"Other": 0,
+	};
+	const byMerchantCents: Record<string, number> = {};
+
+	for (const t of categorized) {
+		byCategoryCents[t.category] += t.centsAmount;
+		byMerchantCents[t.merchant] = (byMerchantCents[t.merchant] || 0) + t.centsAmount;
+	}
+
+	const topMerchants = Object.entries(byMerchantCents)
+		.map(([merchant, cents]) => ({ merchant, cents }))
+		.sort((a, b) => b.cents - a.cents)
+		.slice(0, 5);
+
+	return {
+		totalCents,
+		byCategoryCents,
+		byMerchantCents,
+		topMerchants,
+	};
+}
+function isCategory(x: string): x is Category {
+
+	return allowedCategories.includes(x as Category);
+		}
 function median (values: number[]):number{
 
 	const sorted = [...values].sort((a, b) => a - b);
@@ -193,6 +255,40 @@ async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> 
 	return parsed.normalizedMerchant?.trim() || merchant;
 
 }
+async function categorizeMerchant(env:Env, merchant:string): Promise<Category> { // Categorize merchant using AI
+
+	const cleaned = merchant.trim();
+	if (!cleaned) return "Other";
+
+	const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {  // Llama 3.3
+		
+		messages:[
+			{
+				role: "system",
+        		content:
+          		"You categorize merchants into ONE allowed category. " +
+          		'Output ONLY JSON like {"category":"..."} and the value must be exactly one allowed category.',
+			},
+			{
+				role: "user",
+				content:
+				  `Allowed categories:\n- ${allowedCategories.join("\n- ")}\n\n` +
+				  `Merchant: ${cleaned}\n\n` +
+				  `Return ONLY JSON.`,
+			},
+		],
+		temperature:0,
+		response_format: {type:"json_object"},
+	
+	});
+	const wrapper = result as { response?: string }; // Extract response
+  	if (!wrapper.response) return "Other"; 
+
+  	const parsed = JSON.parse(wrapper.response) as { category?: string }; // Parse JSON
+  	const out = (parsed.category ?? "").trim();
+
+  	return isCategory(out) ? out : "Other";
+} 
 
 
 export default {
@@ -234,8 +330,36 @@ export default {
 				merchant: merchantMap.get(t.merchant) ?? t.merchant,
 			}));
 
+			// Categorize merchants using AI
+
+			const uniqueNormalizedMerchants = Array.from(new Set(normalizedMerchants.map(t => t.merchant)));
+			const categoryMap = new Map<string, Category>();
+			await Promise.all(
+				uniqueNormalizedMerchants.map(async (m) => {
+					const category = await categorizeMerchant(env, m);
+					categoryMap.set(m, category);
+				})
+			)
+			const categorized: CategorizedTransaction[] = normalizedMerchants.map(t => ({
+				...t,
+				category: categoryMap.get(t.merchant) ?? "Other",
+			}));
+
+			// Build Summary
+
+			const summary = summaryBuilder(categorized);
+
+			// Subscriptions
+
 			const subscriptions = findSubscription(normalizedMerchants);
-			return Response.json({ ok: true, normalized: normalizedMerchants, warnings, subscriptions,merchantMap: Object.fromEntries(merchantMap) }, { headers: corsHeaders });
+			return Response.json({ 
+				 ok: true,
+				 transactions: categorized, 
+				 warnings, 
+				 subscriptions,
+				 summary, }, 
+				 { headers: corsHeaders }
+				) ;
 
 
 		}
