@@ -4,6 +4,22 @@ import type { Env, NormalizedTransaction, CategorizedTransaction, Category } fro
 import { parseLine } from "./index";
 
 
+async function mapLimit<T>( // Utility function to process items with concurrency limit
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<void>
+  ) {
+    let i = 0;
+    const workers = Array.from({ length: limit }, async () => {
+      while (i < items.length) {
+        const idx = i++;
+        await fn(items[idx]);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+
 export async function analyzeText(env: Env, text: string) {
 	const normalized: NormalizedTransaction[] = [];
 	const warnings: string[] = [];
@@ -16,9 +32,9 @@ export async function analyzeText(env: Env, text: string) {
   
 	const uniqueMerchants = Array.from(new Set(normalized.map(t => t.merchant)));
 	const merchantMap = new Map<string, string>();
-	await Promise.all(uniqueMerchants.map(async (m) => {
-	  merchantMap.set(m, await normalizedMerchant(env, m));
-	}));
+	await mapLimit(uniqueMerchants, 4, async (m) => {
+        merchantMap.set(m, await normalizedMerchant(env, m));
+      });
   
 	const normalizedMerchants = normalized.map(t => ({
 	  ...t,
@@ -27,9 +43,9 @@ export async function analyzeText(env: Env, text: string) {
   
 	const uniqueNormalizedMerchants = Array.from(new Set(normalizedMerchants.map(t => t.merchant)));
 	const categoryMap = new Map<string, Category>();
-	await Promise.all(uniqueNormalizedMerchants.map(async (m) => {
-	  categoryMap.set(m, await categorizeMerchant(env, m));
-	}));
+	await mapLimit(uniqueNormalizedMerchants, 4, async (m) => {
+        categoryMap.set(m, await categorizeMerchant(env, m));
+      });
   
 	const categorized: CategorizedTransaction[] = normalizedMerchants.map(t => ({
 	  ...t,

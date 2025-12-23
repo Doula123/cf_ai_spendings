@@ -7,6 +7,8 @@ export class AnalyzeWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     async run(event:WorkflowEvent<Params>, step: WorkflowStep)
     {
+        const start = Date.now();
+        console.log("[workflow:start]", event.payload.runId);
         const {runId, text} = event.payload;
 
 
@@ -34,6 +36,14 @@ export class AnalyzeWorkflow extends WorkflowEntrypoint<Env, Params> {
                                      .bind(JSON.stringify
                                         (result), runId).run();
                                 });
+
+                
+                                console.log(
+                                    "[workflow:end]",
+                                    event.payload.runId,
+                                    "duration_ms=",
+                                    Date.now() - start
+                                  );
         } catch (err)
         {
             const message = err instanceof Error ? err.message : "Unknown error";
