@@ -1,7 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type {RunResult, AnalyzerStatus} from "../types";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+const isDev = import.meta.env.DEV;
+
+const BACKEND_URL = isDev ? "" : import.meta.env.VITE_BACKEND_URL || "";
+
+
 
 export function useAnalyzer() // Custom hook to analyze text
 {
@@ -23,7 +27,7 @@ export function useAnalyzer() // Custom hook to analyze text
     const analyze = useCallback(async (text: string) => {
 
 
-        if (!BACKEND_URL)
+        if (!isDev && !BACKEND_URL)
         {
             setError("Backend URL is not configured.");
             setStatus("error");
