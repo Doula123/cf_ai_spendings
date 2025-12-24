@@ -18,53 +18,76 @@ async function aiRunWithRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T>
   }
 
 
-export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> { // Normalize merchant names using AI
-	
-	const merchant = merchantRaw.trim();
-	if (!merchant) return merchantRaw;
+  export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<string> { 
+    
+    const merchant = merchantRaw.trim();
+    if (!merchant) return merchantRaw;
 
-	const cached = await env.DB.prepare("SELECT normalized_merchant FROM merchant_norm_cache WHERE raw_merchant = ?1")
-								.bind(merchant)
-								.first<{normalized_merchant:string}>();
+    // 1. Check Cache
+    const cached = await env.DB.prepare("SELECT normalized_merchant FROM merchant_norm_cache WHERE raw_merchant = ?1")
+                                .bind(merchant)
+                                .first<{normalized_merchant:string}>();
 
-	if (cached?.normalized_merchant) return cached.normalized_merchant;
+    if (cached?.normalized_merchant) return cached.normalized_merchant;
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, // Llama 3.1 8b
-	{
-		messages:[ 
-			{
-				role: "system", // Instructions for the AI
-				content:
-				  'You are a linguistic expert specializing in brand names. ' +
-          		  'Normalize merchant names by removing transaction codes, IDs, and locations. ' +
-          		  'CRITICAL: Do not truncate or "guess" words based on prefixes. ' +
-          		  'Treat the string as a complete entity (e.g., if a name is unfamiliar, do not assume it is a fragment of a common word). ' +
-          		  'Output ONLY JSON: {"normalizedMerchant":"..."}',
-			  },
-			  {
-				role: "user", // The actual prompt with the merchant name
-				content:
-				  `Normalize this to a clean brand name.\n` +
-				  `Remove codes/IDs like *1234, locations, .com, CA, POS.\n` +
-				  `Keep only the brand. If unsure, return the original cleaned.\n\n` +
-				  `Extract the clean brand name from this string: ${merchant}`,
-			  },
-		],
-		temperature:0,
-	}));
-	console.log("AI raw result:", JSON.stringify(result));
+    // 2. Call AI
+    const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast" as any, 
+    {
+        messages:[ 
+            {
+                role: "system", 
+                content: `You are a helper that cleans merchant names.
+				RULES:
+				1. Remove transaction codes (#123, *882), URLs, and city/province names.
+				2. If the input is "SQ *NAME", return "NAME".
+				3. Strip "noise" words like "INC", "CORP", "LTD".
+				4. KEEP meaningful words like "Coffee", "Market", "Foods".
+				5. Always put acronyms in all CAPS.
 
-	const wrapper = result as { response?: string };
-  	const parsed = wrapper.response ? (JSON.parse(wrapper.response) as { normalizedMerchant?: string }) : {};
-  	const out = (parsed.normalizedMerchant ?? "").trim() || merchant;
+				EXAMPLES:
+				- "UBER CANADA/UBER TRIP TORONTO ON" -> {"normalizedMerchant": "Uber"}
+				- "SQ *REVELSTOKE COFFEE LOND" -> {"normalizedMerchant": "Revelstoke Coffee"}
+				- "ANYTIME FITNESS888-8279262" -> {"normalizedMerchant": "Anytime Fitness"}
 
-  	// 3) save cache
-  	await env.DB
+				FINAL COMMAND: Output ONLY raw JSON. Use the key "normalizedMerchant".`
+            },
+            {
+                role: "user", 
+                content: `Normalize: "${merchant}"`,
+            },
+        ],
+        temperature:0,
+    }));
+
+    // 3. Your Original Simple Parsing Logic
+    console.log("AI raw result:", JSON.stringify(result));
+
+    const wrapper = result as { response?: string | object };
+    let parsed: { normalizedMerchant?: string } = {};
+
+    if (wrapper.response) {
+        if (typeof wrapper.response === 'object') {
+            // CASE A: It is already an object (Llama 3.3 default) -> Use it directly
+            parsed = wrapper.response as { normalizedMerchant?: string };
+        } else if (typeof wrapper.response === 'string') {
+            // CASE B: It is a string (Old Llama behavior) -> Parse it
+            try {
+                parsed = JSON.parse(wrapper.response);
+            } catch (e) {
+                console.error("Simple parse failed");
+            }
+        }
+    }
+
+    const out = (parsed.normalizedMerchant ?? "").trim() || merchant;
+
+    // 4. Save Cache
+    await env.DB
     .prepare("INSERT OR REPLACE INTO merchant_norm_cache (raw_merchant, normalized_merchant) VALUES (?1, ?2)")
     .bind(merchant, out)
     .run();
 
-  	return out;
+    return out;
 }
 export async function categorizeMerchant(env:Env, merchant:string): Promise<Category> { // Categorize merchant using AI
 
@@ -79,7 +102,7 @@ export async function categorizeMerchant(env:Env, merchant:string): Promise<Cate
  	if (cached?.category && isCategory(cached.category)) return cached.category;
 
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-70b-instruct" as any, {  // Llama 3.1 70b
+	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast" as any, {  // Llama 3.1 70b
 		
 		messages:[
 			{
@@ -105,10 +128,25 @@ export async function categorizeMerchant(env:Env, merchant:string): Promise<Cate
 		
 	
 	}));
-	const wrapper = result as { response?: string };
-  	const parsed = wrapper.response ? (JSON.parse(wrapper.response) as { category?: string }) : {};
-  	const out = (parsed.category ?? "").trim();
-  	const finalCat: Category = isCategory(out) ? out : "Other";
+	const wrapper = result as { response?: string | object };
+    let parsed: { category?: string } = {};
+
+    if (wrapper.response) {
+        if (typeof wrapper.response === 'object') {
+            // CASE A: It is already an object (Llama 3.3 default)
+            parsed = wrapper.response as { category?: string };
+        } else if (typeof wrapper.response === 'string') {
+            // CASE B: It is a string (Old/Fallback behavior)
+            try {
+                parsed = JSON.parse(wrapper.response);
+            } catch (e) {
+                console.error("Category parse failed");
+            }
+        }
+    }
+
+    const out = (parsed.category ?? "").trim();
+    const finalCat: Category = isCategory(out) ? out : "Other";
 
   	// 3) save cache
   	await env.DB
