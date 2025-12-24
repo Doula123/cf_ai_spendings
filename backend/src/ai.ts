@@ -37,19 +37,23 @@ async function aiRunWithRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T>
             {
                 role: "system", 
                 content: `You are a helper that cleans merchant names.
-				RULES:
-				1. Remove transaction codes (#123, *882), URLs, and city/province names.
-				2. If the input is "SQ *NAME", return "NAME".
-				3. Strip "noise" words like "INC", "CORP", "LTD".
-				4. KEEP meaningful words like "Coffee", "Market", "Foods".
-				5. Always put acronyms in all CAPS.
+                
+                STEP 1: CLEAN
+                - Remove transaction codes (#123, *882), URLs, and city/province names.
+                - Remove "SQ *", "TST *", and "Inc/Corp/Ltd".
+                - Remove departments like "Mobility" or "Internet".
 
-				EXAMPLES:
-				- "UBER CANADA/UBER TRIP TORONTO ON" -> {"normalizedMerchant": "Uber"}
-				- "SQ *REVELSTOKE COFFEE LOND" -> {"normalizedMerchant": "Revelstoke Coffee"}
-				- "ANYTIME FITNESS888-8279262" -> {"normalizedMerchant": "Anytime Fitness"}
+                STEP 2: FORMAT
+                - Default: Use Title Case (e.g. "McDonald's", "Pete's Frootique", "Walmart").
+                - Acronyms: Keep "LCBO", "KFC", "YMCA", "A&W" in ALL CAPS.
 
-				FINAL COMMAND: Output ONLY raw JSON. Use the key "normalizedMerchant".`
+                EXAMPLES:
+                - "SQ *PETES FROOTIQUE" -> {"normalizedMerchant": "Pete's Frootique"}
+                - "MCDONALDS #4029" -> {"normalizedMerchant": "McDonald's"}
+                - "LCBO/RAO #0442 TORONTO" -> {"normalizedMerchant": "LCBO"}
+                - "TELUS MOBILITY" -> {"normalizedMerchant": "Telus"}
+                
+                FINAL COMMAND: Output ONLY raw JSON. Use the key "normalizedMerchant".`
             },
             {
                 role: "user", 
