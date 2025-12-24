@@ -29,7 +29,7 @@ export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<s
 
 	if (cached?.normalized_merchant) return cached.normalized_merchant;
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", // Llama 3.3
+	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, // Llama 3.3
 	{
 		messages:[ 
 			{
@@ -51,7 +51,6 @@ export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<s
 			  },
 		],
 		temperature:0,
-		response_format: {type:"json_object"},
 	}));
 	console.log("AI raw result:", JSON.stringify(result));
 
@@ -80,7 +79,7 @@ export async function categorizeMerchant(env:Env, merchant:string): Promise<Cate
  	if (cached?.category && isCategory(cached.category)) return cached.category;
 
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {  // Llama 3.3
+	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, {  // Llama 3.3
 		
 		messages:[
 			{
@@ -98,7 +97,7 @@ export async function categorizeMerchant(env:Env, merchant:string): Promise<Cate
 			},
 		],
 		temperature:0,
-		response_format: {type:"json_object"},
+		
 	
 	}));
 	const wrapper = result as { response?: string };

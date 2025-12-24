@@ -2,15 +2,14 @@ import type {Env,
 	AnalyzeRequest, 
 	NormalizedTransaction, 
 	} from "./types";
-
 export {AnalyzeWorkflow} from "./workflows/analyze";
+
 
 const corsHeaders: Record<string, string> = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 	"Access-Control-Allow-Headers": "Content-Type",
 };
-
 
 function dateFromString(dateStr: string): string | null {
 	if (dateStr.length !== 10) return null;
@@ -28,26 +27,26 @@ function dateFromString(dateStr: string): string | null {
   }
 
 function amountToCents(raw:string): number | null {
-	let  string = raw.trim();
-	string = string.replace("$", "").replace("€", "").replace("£", "");
+	let  cleanString = raw.trim();
+	cleanString = cleanString.replace("$", "").replace("€", "").replace("£", "");
 
-	string = string.split(" ").join("");
+	cleanString = cleanString.split(" ").join("");
 
-	const hasDot = string.includes(".");
-	const hasComma = string.includes(",");
+	const hasDot = cleanString.includes(".");
+	const hasComma = cleanString.includes(",");
 
 	if (hasDot && hasComma) {
 		// Determine which is the decimal separator
-		if (string.lastIndexOf(".") > string.lastIndexOf(",")) {
-			string = string.split(",").join("");
+		if (cleanString.lastIndexOf(".") > cleanString.lastIndexOf(",")) {
+			cleanString = cleanString.split(",").join("");
 		} else {
-			string = string.split(".").join("").replace(",", "."); // comma is decimal
+			cleanString = cleanString.split(".").join("").replace(",", "."); // comma is decimal
 		}
 	}
 	else if (hasComma && !hasDot) {
-		string = string.replace(",", ".");
+		cleanString = cleanString.replace(",", ".");
 	}
-	const amount = Number(string);
+	const amount = Number(cleanString);
 	if (isNaN(amount)) {
 		return null;
 	}
@@ -58,12 +57,22 @@ export function parseLine(line:string): {txn?: NormalizedTransaction, warning?: 
 	const trimmed = line.trim();
 	if (!trimmed) return {};
 
-	const parts = trimmed.split(" ").filter(p => p.length > 0); // Split by spaces
-	if (parts.length < 2) return {warning: `Invalid line: "${line}"`} // Not enough information
+	let parts: string[]
 
-	const amountRaw = parts[parts.length - 1]; // Grabbing the last part as amount
-	const cents = amountToCents(amountRaw); // turning total amount into cents
-	if (cents === null) { return {warning: `Invalid amount: "${line}"`}; } // No amount entered
+	if (trimmed.includes(","))
+	{
+		parts = trimmed.split(",").map(p => p.trim()).filter(p => p.length > 0); // Split by commas
+		if (parts.length < 2) return {warning: `Invalid line: "${line}"`} // Not enough information
+	}
+    else
+	{
+		parts = trimmed.split(" ").filter(p => p.length > 0); // Split by spaces
+		if (parts.length < 2) return {warning: `Invalid line: "${line}"`} // Not enough information
+	}
+		const amountRaw = parts[parts.length - 1]; // Grabbing the last part as amount
+		const cents = amountToCents(amountRaw); // turning total amount into cents
+
+		if (cents === null) { return {warning: `Invalid amount: "${line}"`}; } // No amount entered
 
 	const maybeDate = dateFromString(parts[0]); // If theres a date transforming it into date
 
@@ -132,7 +141,13 @@ export default {
 			  });
 			}
 		  
-			const data = JSON.parse(row.summary_json);
+			let data;
+			try {
+    			data = JSON.parse(row.summary_json);
+			} catch (e) {
+    			console.error("Failed to parse summary_json", e);
+    			data = null; 
+			}
 		  
 			return Response.json(
 			  {

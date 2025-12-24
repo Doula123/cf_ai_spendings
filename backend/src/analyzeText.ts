@@ -32,7 +32,7 @@ export async function analyzeText(env: Env, text: string) {
   
 	const uniqueMerchants = Array.from(new Set(normalized.map(t => t.merchant)));
 	const merchantMap = new Map<string, string>();
-	await mapLimit(uniqueMerchants, 4, async (m) => {
+	await mapLimit(uniqueMerchants, 2, async (m) => {
         merchantMap.set(m, await normalizedMerchant(env, m));
       });
   
@@ -43,7 +43,7 @@ export async function analyzeText(env: Env, text: string) {
   
 	const uniqueNormalizedMerchants = Array.from(new Set(normalizedMerchants.map(t => t.merchant)));
 	const categoryMap = new Map<string, Category>();
-	await mapLimit(uniqueNormalizedMerchants, 4, async (m) => {
+	await mapLimit(uniqueNormalizedMerchants, 2, async (m) => {
         categoryMap.set(m, await categorizeMerchant(env, m));
       });
   
