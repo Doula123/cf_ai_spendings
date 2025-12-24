@@ -21,7 +21,7 @@ export function ResultsDashboard({ data }: { data: RunResult }) {
       {/* 0. WARNINGS (If any lines failed) */}
       {data.warnings.length > 0 && (
         <div className="bg-amber-500/10 border border-amber-500/50 rounded-lg p-4 text-amber-200 text-sm">
-          <strong>⚠️ Some lines were skipped:</strong>
+          <strong>Some lines were skipped:</strong>
           <ul className="list-disc pl-5 mt-1 space-y-1 opacity-80">
             {data.warnings.slice(0, 3).map((w, i) => <li key={i}>{w}</li>)}
             {data.warnings.length > 3 && <li>...and {data.warnings.length - 3} more</li>}
