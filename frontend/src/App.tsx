@@ -39,7 +39,7 @@ export default function App() {
                 onChange={(e) => setText(e.target.value)}
                 disabled={isBusy}
                 spellCheck={false}
-                placeholder={`DATE,DESCRIPTION,AMOUNT\n2023-10-01,NETFLIX.COM,15.99\n2023-10-02,SPOTIFY,10.99...`}
+                placeholder={`Paste your bank CSV here...\nFormat: ["DATE","MERCHANT","SPEND","REFUND","BALANCE"]`}
               />
             </div>
             

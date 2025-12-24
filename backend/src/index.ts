@@ -52,41 +52,99 @@ function amountToCents(raw:string): number | null {
 	}
 	return Math.round(amount * 100);
 }
+
+function splitCSVLine(line:string): string[] {
+	const result: string[] = [];
+	let currentPart = "";
+	let inQuotes = false;
+
+	for (const char of line) {
+		if (char === '"') 
+			inQuotes = !inQuotes;
+		else if (char === ',' && !inQuotes) { // 
+			result.push(currentPart.trim());
+			currentPart = "";
+		}
+		else 
+		{
+			currentPart += char;
+		}
+	}
+	result.push(currentPart.trim());
+	return result;
+	
+}
 export function parseLine(line:string): {txn?: NormalizedTransaction, warning?: string}
 {
 	const trimmed = line.trim();
-	if (!trimmed) return {};
+	if (!trimmed || trimmed === "0" || trimmed.toLowerCase().includes("date")) return {}; // Skip empty lines or headers
 
 	let parts: string[]
 
 	if (trimmed.includes(","))
-	{
-		parts = trimmed.split(",").map(p => p.trim()).filter(p => p.length > 0); // Split by commas
-		if (parts.length < 2) return {warning: `Invalid line: "${line}"`} // Not enough information
-	}
+		parts = splitCSVLine(trimmed) // Split by commas
+
     else
 	{
-		parts = trimmed.split(" ").filter(p => p.length > 0); // Split by spaces
-		if (parts.length < 2) return {warning: `Invalid line: "${line}"`} // Not enough information
+		parts = trimmed.split(" ")
+		const temp = [] 
+		for (let p of parts)
+		{
+			if (p.trim() !== "")
+				temp.push(p.trim());
+			parts = temp;
+		}
 	}
-		const amountRaw = parts[parts.length - 1]; // Grabbing the last part as amount
-		const cents = amountToCents(amountRaw); // turning total amount into cents
 
-		if (cents === null) { return {warning: `Invalid amount: "${line}"`}; } // No amount entered
+	if (parts.length < 2) {
+		return { warning: `Could not parse line: "${line}"` };
+	}
 
-	const maybeDate = dateFromString(parts[0]); // If theres a date transforming it into date
+	let date: string | null = null;
+	let cents: number | null = null;
+	let isRefund = false;
+	let possibleMerchants: string[] = [];
 
-	const merchantParts = maybeDate ? 
-	parts.slice(1, parts.length - 1) : parts.slice(0, parts.length - 1);
+	for (let i=0; i< parts.length; i++) { // 
+		let cleanPart = parts[i];
+		if (cleanPart.startsWith('"'))  // Remove starting quotes
+			cleanPart = cleanPart.slice(1);
+			
+		if (cleanPart.endsWith('"')) // Remove quotes
+			cleanPart = cleanPart.slice(0, -1);
+		cleanPart = cleanPart.trim();
 
-	const merchant = merchantParts.join(" ").trim();
-	if (!merchant) return {warning: `Missing merchant: "${line}"`};
+		if (!cleanPart) continue;
+		// Check for Date 
+		const dateFound = dateFromString(cleanPart);
+		if (dateFound && !date) {
+			date = dateFound;
+			continue;
+		}
+
+		const val = amountToCents(cleanPart);
+		if (val !== null && cents === null && val !== 0) {
+			cents = val;
+			if (i=== 3 || cleanPart.includes("-")) // Refund detection
+				isRefund = true;
+			continue;
+		}
+		if(isNaN(Number(cleanPart)) && cleanPart.length > 2) // Not a number, possible merchant
+			possibleMerchants.push(cleanPart);
+	}
+
+	if (cents === null )
+	{
+		return { warning: `Could not find amount in line: "${line}"` };
+	}
+	possibleMerchants.sort((a,b) => b.length - a.length);
+	const merchant = possibleMerchants.length > 0 ? possibleMerchants[0] : "Unknown Merchant";
 
 	return {
 		txn: { 
-			date: maybeDate,
+			date,
 			merchant,
-			centsAmount: cents
+			centsAmount: isRefund ? -Math.abs(cents) : Math.abs(cents),
 		}
 	}
  }

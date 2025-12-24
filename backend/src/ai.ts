@@ -29,17 +29,17 @@ export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<s
 
 	if (cached?.normalized_merchant) return cached.normalized_merchant;
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, // Llama 3.3
+	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, // Llama 3.1 8b
 	{
 		messages:[ 
 			{
 				role: "system", // Instructions for the AI
 				content:
-				  'You normalize merchant names from bank transactions. ' +
-  				  'Remove locations, country codes, transaction IDs, asterisks, numbers, .com, and POS markers. ' +
-  				  'Return the canonical brand name only. ' +
-  				  'If the merchant refers to Netflix, always return "Netflix". ' +
-  				  'Output ONLY JSON: {"normalizedMerchant":"..."}',
+				  'You are a linguistic expert specializing in brand names. ' +
+          		  'Normalize merchant names by removing transaction codes, IDs, and locations. ' +
+          		  'CRITICAL: Do not truncate or "guess" words based on prefixes. ' +
+          		  'Treat the string as a complete entity (e.g., if a name is unfamiliar, do not assume it is a fragment of a common word). ' +
+          		  'Output ONLY JSON: {"normalizedMerchant":"..."}',
 			  },
 			  {
 				role: "user", // The actual prompt with the merchant name
@@ -47,7 +47,7 @@ export async function normalizedMerchant(env:Env, merchantRaw:string): Promise<s
 				  `Normalize this to a clean brand name.\n` +
 				  `Remove codes/IDs like *1234, locations, .com, CA, POS.\n` +
 				  `Keep only the brand. If unsure, return the original cleaned.\n\n` +
-				  `merchant: ${merchant}`,
+				  `Extract the clean brand name from this string: ${merchant}`,
 			  },
 		],
 		temperature:0,
@@ -79,14 +79,19 @@ export async function categorizeMerchant(env:Env, merchant:string): Promise<Cate
  	if (cached?.category && isCategory(cached.category)) return cached.category;
 
 
-	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, {  // Llama 3.3
+	const result = await aiRunWithRetry(() => env.AI.run("@cf/meta/llama-3.1-70b-instruct" as any, {  // Llama 3.1 70b
 		
 		messages:[
 			{
 				role: "system",
         		content:
-          		"You categorize merchants into ONE allowed category. " +
-          		'Output ONLY JSON like {"category":"..."} and the value must be exactly one allowed category.',
+          		"You are a financial classification engine. Categorize the merchant into ONE of these categories: " + allowedCategories.join(", ") + ".\n\n" +
+     			 "DETERMINATION RULES:\n" +
+      			"1. RETAIL CLUES: If the name contains 'Store', 'Shop', 'Market', 'Boutique', or 'Goods', prioritize 'Shopping'.\n" +
+     			 "2. DINING CLUES: If the name contains 'Bistro', 'Grill', 'Kitchen', 'Sushi', or 'Cafe', prioritize 'Food & Dining'.\n" +
+      			"3. PROPER NOUN LOGIC: If the name is a standalone proper noun (e.g., 'MAKOTO', 'IBERICA', 'SHO-DAN') without retail keywords, it is statistically 90% more likely to be 'Food & Dining'.\n" +
+    		    "4. DOUBT: If you cannot find any industry markers and the name sounds corporate (e.g., 'Global Industries'), use 'Other'.\n\n" +
+      			"Return ONLY JSON: {\"category\":\"...\"}"
 			},
 			{
 				role: "user",
