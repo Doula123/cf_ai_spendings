@@ -46,6 +46,7 @@ async function aiRunWithRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T>
                 STEP 2: FORMAT
                 - Default: Use Title Case (e.g. "McDonald's", "Pete's Frootique", "Walmart").
                 - Acronyms: Keep "LCBO", "KFC", "YMCA", "A&W" in ALL CAPS.
+                - SPECIAL RULE: If the merchant is "ETransfer" or "E-Transfer", always format as "E transfer".
 
                 EXAMPLES:
                 - "SQ *PETES FROOTIQUE" -> {"normalizedMerchant": "Pete's Frootique"}
